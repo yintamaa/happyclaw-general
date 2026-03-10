@@ -310,6 +310,8 @@ export function initDatabase(): void {
   ensureColumn('scheduled_tasks', 'execution_type', "TEXT DEFAULT 'agent'");
   ensureColumn('scheduled_tasks', 'script_command', 'TEXT');
   ensureColumn('registered_groups', 'selected_skills', 'TEXT');
+  ensureColumn('registered_groups', 'selected_profile_id', 'TEXT');
+  ensureColumn('registered_groups', 'selected_model', 'TEXT');
   ensureColumn('sessions', 'agent_id', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('agents', 'kind', "TEXT NOT NULL DEFAULT 'task'");
   ensureColumn('registered_groups', 'target_agent_id', 'TEXT');
@@ -411,9 +413,12 @@ export function initDatabase(): void {
       'created_by',
       'is_home',
       'selected_skills',
+      'selected_profile_id',
+      'selected_model',
       'target_agent_id',
       'target_main_jid',
       'reply_policy',
+      'require_mention',
     ],
     ['trigger_pattern', 'requires_trigger'],
   );
@@ -1270,6 +1275,8 @@ type RegisteredGroupRow = {
   created_by: string | null;
   is_home: number;
   selected_skills: string | null;
+  selected_profile_id: string | null;
+  selected_model: string | null;
   target_agent_id: string | null;
   target_main_jid: string | null;
   reply_policy: string | null;
@@ -1297,6 +1304,8 @@ function parseGroupRow(
     selected_skills: row.selected_skills
       ? JSON.parse(row.selected_skills)
       : null,
+    selected_profile_id: row.selected_profile_id ?? undefined,
+    selected_model: row.selected_model ?? undefined,
     target_agent_id: row.target_agent_id ?? undefined,
     target_main_jid: row.target_main_jid ?? undefined,
     reply_policy: row.reply_policy === 'mirror' ? 'mirror' : 'source_only',
@@ -1316,8 +1325,8 @@ export function getRegisteredGroup(
 
 export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, added_at, container_config, execution_mode, custom_cwd, init_source_path, init_git_url, created_by, is_home, selected_skills, target_agent_id, target_main_jid, reply_policy, require_mention)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, added_at, container_config, execution_mode, custom_cwd, init_source_path, init_git_url, created_by, is_home, selected_skills, selected_profile_id, selected_model, target_agent_id, target_main_jid, reply_policy, require_mention)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -1331,6 +1340,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.created_by ?? null,
     group.is_home ? 1 : 0,
     group.selected_skills ? JSON.stringify(group.selected_skills) : null,
+    group.selected_profile_id ?? null,
+    group.selected_model ?? null,
     group.target_agent_id ?? null,
     group.target_main_jid ?? null,
     group.reply_policy ?? 'source_only',
@@ -1763,6 +1774,8 @@ export function getGroupsByOwner(
     created_by: string | null;
     is_home: number;
     selected_skills: string | null;
+    selected_profile_id: string | null;
+    selected_model: string | null;
   }>;
 
   return rows.map((row) => ({
@@ -1782,6 +1795,8 @@ export function getGroupsByOwner(
     selected_skills: row.selected_skills
       ? JSON.parse(row.selected_skills)
       : null,
+    selected_profile_id: row.selected_profile_id ?? undefined,
+    selected_model: row.selected_model ?? undefined,
   }));
 }
 

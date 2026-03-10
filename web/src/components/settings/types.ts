@@ -18,6 +18,7 @@ export interface ClaudeThirdPartyProfileItem {
   name: string;
   anthropicBaseUrl: string;
   happyclawModel: string;
+  modelOptions: string[];
   updatedAt: string | null;
   hasAnthropicAuthToken: boolean;
   anthropicAuthTokenMasked: string | null;

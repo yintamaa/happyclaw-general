@@ -145,6 +145,7 @@ export const ClaudeThirdPartyProfileCreateSchema = z.object({
   anthropicBaseUrl: z.string().max(2000),
   anthropicAuthToken: z.string().max(2000),
   happyclawModel: z.string().max(128).optional(),
+  modelOptions: z.array(z.string().max(128)).max(50).optional(),
   customEnv: z.record(z.string().max(256), z.string().max(4096)).optional(),
 });
 
@@ -153,6 +154,7 @@ export const ClaudeThirdPartyProfilePatchSchema = z
     name: z.string().min(1).max(64).optional(),
     anthropicBaseUrl: z.string().max(2000).optional(),
     happyclawModel: z.string().max(128).optional(),
+    modelOptions: z.array(z.string().max(128)).max(50).optional(),
     customEnv: z.record(z.string().max(256), z.string().max(4096)).optional(),
   })
   .refine(
@@ -160,6 +162,7 @@ export const ClaudeThirdPartyProfilePatchSchema = z
       typeof data.name === 'string' ||
       typeof data.anthropicBaseUrl === 'string' ||
       typeof data.happyclawModel === 'string' ||
+      data.modelOptions !== undefined ||
       data.customEnv !== undefined,
     { message: 'At least one profile field must be provided' },
   );
@@ -192,6 +195,16 @@ export const GroupPatchSchema = z.object({
     .nullable()
     .optional(),
   is_pinned: z.boolean().optional(),
+});
+
+export const GroupModelRoutingSchema = z.object({
+  selected_profile_id: z
+    .string()
+    .max(64)
+    .regex(/^[a-zA-Z0-9_-]+$/)
+    .nullable()
+    .optional(),
+  selected_model: z.string().max(128).nullable().optional(),
 });
 
 export const LoginSchema = z.object({

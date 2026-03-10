@@ -461,6 +461,7 @@ configRoutes.post(
           'anthropicBaseUrl',
           'anthropicAuthToken:set',
           'happyclawModel',
+          ...(validation.data.modelOptions ? ['modelOptions'] : []),
           ...(validation.data.customEnv ? ['customEnv'] : []),
         ],
         {
@@ -503,6 +504,9 @@ configRoutes.patch(
     }
     if (validation.data.happyclawModel !== undefined) {
       changedFields.push('happyclawModel');
+    }
+    if (validation.data.modelOptions !== undefined) {
+      changedFields.push('modelOptions');
     }
     if (validation.data.customEnv !== undefined) {
       changedFields.push('customEnv');

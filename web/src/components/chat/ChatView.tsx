@@ -21,6 +21,14 @@ import { GroupSkillsPanel } from './GroupSkillsPanel';
 import { GroupMembersPanel } from './GroupMembersPanel';
 import { AgentTabBar } from './AgentTabBar';
 import { ImBindingDialog } from './ImBindingDialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
 import { showToast } from '../../utils/toast';
 
 /** Sentinel value for binding the main conversation (vs. a specific agent) */
@@ -55,6 +63,23 @@ interface ChatViewProps {
   groupJid: string;
   onBack?: () => void;
   headerLeft?: React.ReactNode;
+}
+
+interface ModelProfileOption {
+  id: string;
+  name: string;
+  defaultModel: string;
+  models: string[];
+  isOfficial: boolean;
+}
+
+interface GroupModelOptionsResponse {
+  activeProfileId: string;
+  current: {
+    selected_profile_id: string | null;
+    selected_model: string | null;
+  };
+  profiles: ModelProfileOption[];
 }
 
 export function ChatView({ groupJid, onBack, headerLeft }: ChatViewProps) {
@@ -95,6 +120,7 @@ export function ChatView({ groupJid, onBack, headerLeft }: ChatViewProps) {
   const hasMoreMessages = useChatStore(s => !!s.hasMore[groupJid]);
   const loading = useChatStore(s => s.loading);
   const loadMessages = useChatStore(s => s.loadMessages);
+  const loadGroups = useChatStore(s => s.loadGroups);
   const refreshMessages = useChatStore(s => s.refreshMessages);
   const sendMessage = useChatStore(s => s.sendMessage);
   const interruptQuery = useChatStore(s => s.interruptQuery);
@@ -244,6 +270,54 @@ export function ChatView({ groupJid, onBack, headerLeft }: ChatViewProps) {
   }, [groupJid, handleStreamEvent, handleWsNewMessage, handleAgentStatus, clearStreaming]);
 
   const [scrollTrigger, setScrollTrigger] = useState(0);
+  const [modelOptions, setModelOptions] = useState<GroupModelOptionsResponse | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('');
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [modelSaving, setModelSaving] = useState(false);
+
+  const loadModelOptions = useCallback(async () => {
+    try {
+      const data = await api.get<GroupModelOptionsResponse>(
+        `/api/groups/${encodeURIComponent(groupJid)}/model-options`,
+      );
+      setModelOptions(data);
+      const initialProfileId = data.current.selected_profile_id || data.activeProfileId;
+      const profile = data.profiles.find((p) => p.id === initialProfileId) || data.profiles[0];
+      setSelectedProfileId(profile?.id || '');
+      setSelectedModel(data.current.selected_model || profile?.defaultModel || '');
+    } catch (err) {
+      console.warn('Failed to load model options', err);
+    }
+  }, [groupJid]);
+
+  useEffect(() => {
+    loadModelOptions();
+  }, [loadModelOptions]);
+
+  const persistModelRouting = useCallback(
+    async (profileId: string, model: string) => {
+      setModelSaving(true);
+      try {
+        await api.patch(
+          `/api/groups/${encodeURIComponent(groupJid)}/model-routing`,
+          {
+            selected_profile_id: profileId || null,
+            selected_model: model || null,
+          },
+        );
+        await Promise.all([loadGroups(), loadModelOptions()]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '模型设置保存失败';
+        showToast('error', msg);
+      } finally {
+        setModelSaving(false);
+      }
+    },
+    [groupJid, loadGroups, loadModelOptions],
+  );
+
+  const activeProfile = modelOptions?.profiles.find((p) => p.id === selectedProfileId);
+  const profileModels = activeProfile?.models || [];
 
   const handleSend = async (content: string, attachments?: Array<{ data: string; mimeType: string }>) => {
     await sendMessage(groupJid, content, attachments);
@@ -723,6 +797,71 @@ export function ChatView({ groupJid, onBack, headerLeft }: ChatViewProps) {
                 onAgentClick={(agentId) => setActiveAgentTab(groupJid, agentId)}
                 onSend={(content) => handleSend(content)}
               />
+              {modelOptions && (
+                <div className="border-t px-3 py-2 bg-muted/20 flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground shrink-0">模型</span>
+                  <Select
+                    value={selectedProfileId}
+                    onValueChange={(value) => {
+                      setSelectedProfileId(value);
+                      const profile = modelOptions.profiles.find((p) => p.id === value);
+                      const nextModel = profile?.defaultModel || '';
+                      setSelectedModel(nextModel);
+                      persistModelRouting(value, nextModel);
+                    }}
+                    disabled={modelSaving}
+                  >
+                    <SelectTrigger className="h-8 text-xs w-44">
+                      <SelectValue placeholder="接入配置" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelOptions.profiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={selectedModel || '__empty__'}
+                    onValueChange={(value) => {
+                      const next = value === '__empty__' ? '' : value;
+                      setSelectedModel(next);
+                      persistModelRouting(selectedProfileId, next);
+                    }}
+                    disabled={modelSaving}
+                  >
+                    <SelectTrigger className="h-8 text-xs flex-1 min-w-0">
+                      <SelectValue placeholder="默认模型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__empty__">使用默认模型</SelectItem>
+                      {selectedModel && !profileModels.includes(selectedModel) && (
+                        <SelectItem value={selectedModel}>
+                          {selectedModel}（当前自定义）
+                        </SelectItem>
+                      )}
+                      {profileModels.map((model) => (
+                        <SelectItem key={model} value={model}>
+                          {model}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedModel && !profileModels.includes(selectedModel) && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => persistModelRouting(selectedProfileId, '')}
+                      disabled={modelSaving}
+                    >
+                      清除
+                    </Button>
+                  )}
+                </div>
+              )}
               <MessageInput
                 onSend={handleSend}
                 groupJid={groupJid}

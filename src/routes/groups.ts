@@ -6,6 +6,7 @@ import {
   GroupPatchSchema,
   GroupMemberAddSchema,
   ContainerEnvSchema,
+  GroupModelRoutingSchema,
 } from '../schemas.js';
 import type { AuthUser, RegisteredGroup, ExecutionMode } from '../types.js';
 import { DATA_DIR, GROUPS_DIR } from '../config.js';
@@ -58,6 +59,7 @@ import {
   saveContainerEnvConfig,
   deleteContainerEnvConfig,
   toPublicContainerEnvConfig,
+  listClaudeModelEndpointOptions,
 } from '../runtime-config.js';
 import {
   loadMountAllowlist,
@@ -152,6 +154,8 @@ interface GroupPayloadItem {
   member_role?: 'owner' | 'member';
   member_count?: number;
   selected_skills?: string[] | null;
+  selected_profile_id?: string;
+  selected_model?: string;
   pinned_at?: string;
 }
 
@@ -260,6 +264,8 @@ function buildGroupsPayload(user: AuthUser): Record<string, GroupPayloadItem> {
       member_role: memberInfo?.role ?? undefined,
       member_count: isShared ? memberInfo?.count : undefined,
       selected_skills: group.selected_skills ?? null,
+      selected_profile_id: group.selected_profile_id,
+      selected_model: group.selected_model,
       pinned_at: pins[jid] || undefined,
     };
   }
@@ -746,6 +752,12 @@ groupRoutes.patch('/:jid', authMiddleware, async (c) => {
         selected_skills !== undefined
           ? (selected_skills ?? null)
           : existing.selected_skills,
+      selected_profile_id: existing.selected_profile_id,
+      selected_model: existing.selected_model,
+      target_agent_id: existing.target_agent_id,
+      target_main_jid: existing.target_main_jid,
+      reply_policy: existing.reply_policy,
+      require_mention: existing.require_mention,
     };
 
     setRegisteredGroup(jid, updated);
@@ -754,6 +766,83 @@ groupRoutes.patch('/:jid', authMiddleware, async (c) => {
   }
 
   return c.json({ success: true, pinned_at });
+});
+
+// GET /api/groups/:jid/model-options - 获取可选模型接入配置
+groupRoutes.get('/:jid/model-options', authMiddleware, async (c) => {
+  const jid = c.req.param('jid');
+  const group = getRegisteredGroup(jid);
+  if (!group) return c.json({ error: 'Group not found' }, 404);
+
+  const authUser = c.get('user') as AuthUser;
+  if (
+    !canAccessGroup(
+      { id: authUser.id, role: authUser.role },
+      { ...group, jid },
+    )
+  ) {
+    return c.json({ error: 'Group not found' }, 404);
+  }
+
+  const options = listClaudeModelEndpointOptions();
+  return c.json({
+    activeProfileId: options.activeProfileId,
+    current: {
+      selected_profile_id: group.selected_profile_id || null,
+      selected_model: group.selected_model || null,
+    },
+    profiles: options.profiles,
+  });
+});
+
+// PATCH /api/groups/:jid/model-routing - 保存工作区模型路由
+groupRoutes.patch('/:jid/model-routing', authMiddleware, async (c) => {
+  const deps = getWebDeps();
+  if (!deps) return c.json({ error: 'Server not initialized' }, 500);
+
+  const jid = c.req.param('jid');
+  const existing = getRegisteredGroup(jid);
+  if (!existing) return c.json({ error: 'Group not found' }, 404);
+
+  const authUser = c.get('user') as AuthUser;
+  if (
+    !canModifyGroup(
+      { id: authUser.id, role: authUser.role },
+      { ...existing, jid },
+    )
+  ) {
+    return c.json({ error: 'Group not found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const validation = GroupModelRoutingSchema.safeParse(body);
+  if (!validation.success) {
+    return c.json({ error: 'Invalid request body' }, 400);
+  }
+
+  const { selected_profile_id, selected_model } = validation.data;
+  const trimmedProfileId = selected_profile_id?.trim() || null;
+  const trimmedModel = selected_model?.trim() || null;
+
+  const options = listClaudeModelEndpointOptions();
+  const allowedProfileIds = new Set(options.profiles.map((p) => p.id));
+  if (trimmedProfileId && !allowedProfileIds.has(trimmedProfileId)) {
+    return c.json({ error: 'Invalid selected_profile_id' }, 400);
+  }
+
+  const updated: RegisteredGroup = {
+    ...existing,
+    selected_profile_id: trimmedProfileId || undefined,
+    selected_model: trimmedModel || undefined,
+  };
+  setRegisteredGroup(jid, updated);
+  deps.getRegisteredGroups()[jid] = updated;
+
+  return c.json({
+    success: true,
+    selected_profile_id: updated.selected_profile_id || null,
+    selected_model: updated.selected_model || null,
+  });
 });
 
 // DELETE /api/groups/:jid - 删除群组

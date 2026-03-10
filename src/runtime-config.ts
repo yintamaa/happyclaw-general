@@ -9,7 +9,7 @@ const MAX_FIELD_LENGTH = 2000;
 const CURRENT_CONFIG_VERSION = 3;
 const DEFAULT_THIRD_PARTY_PROFILE_ID = 'default';
 const DEFAULT_THIRD_PARTY_PROFILE_NAME = '默认第三方';
-const OFFICIAL_CLAUDE_PROFILE_ID = '__official__';
+export const OFFICIAL_CLAUDE_PROFILE_ID = '__official__';
 
 const CLAUDE_CONFIG_DIR = path.join(DATA_DIR, 'config');
 const CLAUDE_CONFIG_FILE = path.join(CLAUDE_CONFIG_DIR, 'claude-provider.json');
@@ -124,6 +124,7 @@ export interface ClaudeThirdPartyProfile {
   anthropicBaseUrl: string;
   anthropicAuthToken: string;
   happyclawModel: string;
+  modelOptions: string[];
   updatedAt: string | null;
   customEnv: Record<string, string>;
 }
@@ -133,10 +134,26 @@ export interface ClaudeThirdPartyProfilePublic {
   name: string;
   anthropicBaseUrl: string;
   happyclawModel: string;
+  modelOptions: string[];
   updatedAt: string | null;
   hasAnthropicAuthToken: boolean;
   anthropicAuthTokenMasked: string | null;
   customEnv: Record<string, string>;
+}
+
+export interface ClaudeModelEndpointOption {
+  id: string;
+  name: string;
+  mode: ClaudeProviderMode;
+  anthropicBaseUrl: string;
+  defaultModel: string;
+  models: string[];
+  isOfficial: boolean;
+}
+
+export interface ClaudeModelEndpointOptions {
+  activeProfileId: string;
+  profiles: ClaudeModelEndpointOption[];
 }
 
 export interface FeishuProviderConfig {
@@ -224,6 +241,7 @@ interface StoredClaudeThirdPartyProfileV1 {
   name: string;
   anthropicBaseUrl: string;
   happyclawModel: string;
+  modelOptions?: string[];
   updatedAt: string;
   secrets: EncryptedSecrets;
   customEnv?: Record<string, string>;
@@ -317,6 +335,33 @@ function normalizeModel(input: unknown): string {
     throw new Error('Field too long: happyclawModel');
   }
   return value;
+}
+
+function normalizeModelList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const item of input) {
+    if (typeof item !== 'string') continue;
+    const normalized = normalizeModel(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    models.push(normalized);
+  }
+  return models.slice(0, 50);
+}
+
+function parseModelListFromEnv(value: string | undefined): string[] {
+  if (!value) return [];
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const raw of value.split(/[,\n]/)) {
+    const model = raw.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+  return models.slice(0, 50);
 }
 
 function normalizeFeishuAppId(input: unknown): string {
@@ -581,6 +626,7 @@ function toStoredProfile(
     name: normalizeProfileName(profile.name),
     anthropicBaseUrl: normalizeBaseUrl(profile.anthropicBaseUrl),
     happyclawModel: normalizeModel(profile.happyclawModel),
+    modelOptions: normalizeModelList(profile.modelOptions),
     updatedAt: profile.updatedAt || new Date().toISOString(),
     secrets: encryptSecrets({
       anthropicAuthToken: normalizeSecret(
@@ -607,6 +653,7 @@ function fromStoredProfile(
     anthropicBaseUrl: normalizeBaseUrl(stored.anthropicBaseUrl),
     anthropicAuthToken: secrets.anthropicAuthToken,
     happyclawModel: normalizeModel(stored.happyclawModel ?? ''),
+    modelOptions: normalizeModelList(stored.modelOptions),
     updatedAt: stored.updatedAt || null,
     customEnv: sanitizeCustomEnvMap(stored.customEnv || {}, {
       skipReservedClaudeKeys: true,
@@ -617,14 +664,16 @@ function fromStoredProfile(
 function makeDefaultThirdPartyProfile(
   config: ClaudeProviderConfig,
 ): ClaudeThirdPartyProfile {
+  const defaultModel = normalizeModel(
+    config.happyclawModel || process.env.HAPPYCLAW_MODEL || '',
+  );
   return {
     id: DEFAULT_THIRD_PARTY_PROFILE_ID,
     name: DEFAULT_THIRD_PARTY_PROFILE_NAME,
     anthropicBaseUrl: config.anthropicBaseUrl,
     anthropicAuthToken: config.anthropicAuthToken,
-    happyclawModel: normalizeModel(
-      config.happyclawModel || process.env.HAPPYCLAW_MODEL || '',
-    ),
+    happyclawModel: defaultModel,
+    modelOptions: defaultModel ? [defaultModel] : [],
     updatedAt: config.updatedAt || new Date().toISOString(),
     customEnv: {},
   };
@@ -1419,6 +1468,162 @@ export function listClaudeThirdPartyProfiles(): {
   };
 }
 
+function uniqueModels(values: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!value) continue;
+    const model = value.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    out.push(model);
+  }
+  return out;
+}
+
+function buildProfileModels(
+  defaultModel: string,
+  modelOptions: string[],
+  customEnv: Record<string, string>,
+): string[] {
+  return uniqueModels([
+    defaultModel,
+    ...modelOptions,
+    ...parseModelListFromEnv(customEnv.HAPPYCLAW_MODELS),
+  ]);
+}
+
+function buildOfficialModelCandidates(): string[] {
+  return uniqueModels([
+    process.env.HAPPYCLAW_MODEL || '',
+    process.env.ANTHROPIC_MODEL || '',
+    'opus',
+    'sonnet',
+    'haiku',
+  ]);
+}
+
+export function listClaudeModelEndpointOptions(): ClaudeModelEndpointOptions {
+  const state = readStoredState();
+  const fallback = defaultsFromEnv();
+  const activeProfileId = state?.activeProfileId || DEFAULT_THIRD_PARTY_PROFILE_ID;
+
+  const profiles: ClaudeModelEndpointOption[] = [];
+  profiles.push({
+    id: OFFICIAL_CLAUDE_PROFILE_ID,
+    name: 'Claude 官方',
+    mode: 'official',
+    anthropicBaseUrl: '',
+    defaultModel: process.env.HAPPYCLAW_MODEL || '',
+    models: buildOfficialModelCandidates(),
+    isOfficial: true,
+  });
+
+  if (!state) {
+    const profile = makeDefaultThirdPartyProfile(fallback);
+    profiles.push({
+      id: profile.id,
+      name: profile.name,
+      mode: 'third_party',
+      anthropicBaseUrl: profile.anthropicBaseUrl,
+      defaultModel: profile.happyclawModel,
+      models: buildProfileModels(
+        profile.happyclawModel,
+        profile.modelOptions,
+        profile.customEnv || {},
+      ),
+      isOfficial: false,
+    });
+    return { activeProfileId: profile.id, profiles };
+  }
+
+  for (const stored of state.profiles) {
+    const profile = fromStoredProfile(stored);
+    profiles.push({
+      id: profile.id,
+      name: profile.name,
+      mode: 'third_party',
+      anthropicBaseUrl: profile.anthropicBaseUrl,
+      defaultModel: profile.happyclawModel,
+      models: buildProfileModels(
+        profile.happyclawModel,
+        profile.modelOptions,
+        profile.customEnv || {},
+      ),
+      isOfficial: false,
+    });
+  }
+
+  return { activeProfileId, profiles };
+}
+
+export function resolveClaudeProviderConfigByProfileId(
+  profileId?: string | null,
+): { profileId: string; mode: ClaudeProviderMode; config: ClaudeProviderConfig; customEnv: Record<string, string> } {
+  const state = readStoredState();
+  if (!state) {
+    return {
+      profileId: DEFAULT_THIRD_PARTY_PROFILE_ID,
+      mode: 'third_party',
+      config: defaultsFromEnv(),
+      customEnv: {},
+    };
+  }
+
+  const targetId =
+    profileId && profileId.trim() ? normalizeProfileId(profileId) : state.activeProfileId;
+  if (isOfficialClaudeMode(targetId)) {
+    return {
+      profileId: OFFICIAL_CLAUDE_PROFILE_ID,
+      mode: 'official',
+      config: buildOfficialClaudeProviderConfig(
+        state.officialSecrets,
+        state.officialUpdatedAt,
+      ),
+      customEnv: sanitizeCustomEnvMap(state.officialCustomEnv || {}, {
+        skipReservedClaudeKeys: true,
+      }),
+    };
+  }
+
+  const activeStored =
+    state.profiles.find((item) => item.id === targetId) || state.profiles[0];
+  if (!activeStored) {
+    return {
+      profileId: OFFICIAL_CLAUDE_PROFILE_ID,
+      mode: 'official',
+      config: buildOfficialClaudeProviderConfig(
+        state.officialSecrets,
+        state.officialUpdatedAt,
+      ),
+      customEnv: sanitizeCustomEnvMap(state.officialCustomEnv || {}, {
+        skipReservedClaudeKeys: true,
+      }),
+    };
+  }
+
+  const profile = fromStoredProfile(activeStored);
+  return {
+    profileId: profile.id,
+    mode: 'third_party',
+    config: buildConfig(
+      {
+        anthropicBaseUrl: profile.anthropicBaseUrl,
+        anthropicAuthToken: profile.anthropicAuthToken,
+        anthropicApiKey: state.officialSecrets.anthropicApiKey,
+        claudeCodeOauthToken: state.officialSecrets.claudeCodeOauthToken,
+        claudeOAuthCredentials:
+          state.officialSecrets.claudeOAuthCredentials ?? null,
+        happyclawModel: profile.happyclawModel,
+      },
+      profile.updatedAt || state.officialUpdatedAt,
+    ),
+    customEnv: sanitizeCustomEnvMap(profile.customEnv || {}, {
+      skipReservedClaudeKeys: true,
+    }),
+  };
+}
+
 export function toPublicClaudeThirdPartyProfile(
   profile: ClaudeThirdPartyProfile,
 ): ClaudeThirdPartyProfilePublic {
@@ -1427,6 +1632,7 @@ export function toPublicClaudeThirdPartyProfile(
     name: profile.name,
     anthropicBaseUrl: profile.anthropicBaseUrl,
     happyclawModel: profile.happyclawModel,
+    modelOptions: profile.modelOptions,
     updatedAt: profile.updatedAt,
     hasAnthropicAuthToken: !!profile.anthropicAuthToken,
     anthropicAuthTokenMasked: maskSecret(profile.anthropicAuthToken),
@@ -1443,6 +1649,7 @@ export function createClaudeThirdPartyProfile(input: {
   anthropicBaseUrl: string;
   anthropicAuthToken: string;
   happyclawModel?: string;
+  modelOptions?: string[];
   customEnv?: Record<string, string>;
 }): ClaudeThirdPartyProfile {
   const state = readStoredState() || {
@@ -1463,6 +1670,11 @@ export function createClaudeThirdPartyProfile(input: {
   }
 
   const now = new Date().toISOString();
+  const defaultModel = normalizeModel(input.happyclawModel ?? '');
+  const modelOptions = normalizeModelList(input.modelOptions);
+  if (defaultModel && !modelOptions.includes(defaultModel)) {
+    modelOptions.unshift(defaultModel);
+  }
   const profile: ClaudeThirdPartyProfile = {
     id: randomProfileId(),
     name: normalizeProfileName(input.name),
@@ -1471,7 +1683,8 @@ export function createClaudeThirdPartyProfile(input: {
       input.anthropicAuthToken,
       'anthropicAuthToken',
     ),
-    happyclawModel: normalizeModel(input.happyclawModel ?? ''),
+    happyclawModel: defaultModel,
+    modelOptions,
     updatedAt: now,
     customEnv: sanitizeCustomEnvMap(input.customEnv || {}, {
       skipReservedClaudeKeys: true,
@@ -1511,6 +1724,7 @@ export function updateClaudeThirdPartyProfile(
     name?: string;
     anthropicBaseUrl?: string;
     happyclawModel?: string;
+    modelOptions?: string[];
     customEnv?: Record<string, string>;
   },
 ): ClaudeThirdPartyProfile {
@@ -1522,6 +1736,18 @@ export function updateClaudeThirdPartyProfile(
   if (!current) throw new Error('未找到指定第三方配置');
 
   const decoded = fromStoredProfile(current);
+  const nextDefaultModel =
+    patch.happyclawModel !== undefined
+      ? normalizeModel(patch.happyclawModel)
+      : decoded.happyclawModel;
+  const nextModelOptions =
+    patch.modelOptions !== undefined
+      ? normalizeModelList(patch.modelOptions)
+      : decoded.modelOptions;
+  if (nextDefaultModel && !nextModelOptions.includes(nextDefaultModel)) {
+    nextModelOptions.unshift(nextDefaultModel);
+  }
+
   const next: ClaudeThirdPartyProfile = {
     ...decoded,
     name:
@@ -1532,10 +1758,8 @@ export function updateClaudeThirdPartyProfile(
       patch.anthropicBaseUrl !== undefined
         ? normalizeBaseUrl(patch.anthropicBaseUrl)
         : decoded.anthropicBaseUrl,
-    happyclawModel:
-      patch.happyclawModel !== undefined
-        ? normalizeModel(patch.happyclawModel)
-        : decoded.happyclawModel,
+    happyclawModel: nextDefaultModel,
+    modelOptions: nextModelOptions,
     customEnv:
       patch.customEnv !== undefined
         ? sanitizeCustomEnvMap(patch.customEnv, {
@@ -1695,7 +1919,10 @@ export function shellQuoteEnvLines(lines: string[]): string[] {
   });
 }
 
-export function buildClaudeEnvLines(config: ClaudeProviderConfig): string[] {
+export function buildClaudeEnvLines(
+  config: ClaudeProviderConfig,
+  profileCustomEnv?: Record<string, string>,
+): string[] {
   const lines: string[] = [];
 
   // When full OAuth credentials exist, authentication is handled by .credentials.json file.
@@ -1722,7 +1949,11 @@ export function buildClaudeEnvLines(config: ClaudeProviderConfig): string[] {
     lines.push(`HAPPYCLAW_MODEL=${sanitizeEnvValue(config.happyclawModel)}`);
   }
 
-  const customEnv = getActiveProfileCustomEnv();
+  const customEnv =
+    profileCustomEnv ??
+    sanitizeCustomEnvMap(getActiveProfileCustomEnv(), {
+      skipReservedClaudeKeys: true,
+    });
   for (const [key, value] of Object.entries(customEnv)) {
     if (RESERVED_CLAUDE_ENV_KEYS.has(key)) continue;
     lines.push(`${key}=${sanitizeEnvValue(value)}`);
@@ -1995,9 +2226,10 @@ export function saveRegistrationConfig(
 export function buildContainerEnvLines(
   global: ClaudeProviderConfig,
   override: ContainerEnvConfig,
+  profileCustomEnv?: Record<string, string>,
 ): string[] {
   const merged = mergeClaudeEnvConfig(global, override);
-  const lines = buildClaudeEnvLines(merged);
+  const lines = buildClaudeEnvLines(merged, profileCustomEnv);
 
   // Append custom env vars (with safety sanitization as defense-in-depth)
   if (override.customEnv) {

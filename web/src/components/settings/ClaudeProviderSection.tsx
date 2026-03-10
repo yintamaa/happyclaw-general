@@ -92,6 +92,7 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
   const [profileName, setProfileName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
+  const [modelOptionsText, setModelOptionsText] = useState('');
   const [authToken, setAuthToken] = useState('');
   const [authTokenDirty, setAuthTokenDirty] = useState(false);
   const [clearTokenOnSave, setClearTokenOnSave] = useState(false);
@@ -137,6 +138,7 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
     setProfileName('');
     setBaseUrl('');
     setModel(defaultModel);
+    setModelOptionsText(defaultModel ? defaultModel : '');
     setAuthToken('');
     setAuthTokenDirty(false);
     setClearTokenOnSave(false);
@@ -150,6 +152,7 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
     setProfileName(profile.name);
     setBaseUrl(profile.anthropicBaseUrl || '');
     setModel(profile.happyclawModel || '');
+    setModelOptionsText((profile.modelOptions || []).join(', '));
     setAuthToken('');
     setAuthTokenDirty(false);
     setClearTokenOnSave(false);
@@ -407,6 +410,17 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
     const trimmedToken = authToken.trim();
+    const parsedModelOptions = Array.from(
+      new Set(
+        modelOptionsText
+          .split(/[,\n]/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    ).slice(0, 50);
+    if (trimmedModel && !parsedModelOptions.includes(trimmedModel)) {
+      parsedModelOptions.unshift(trimmedModel);
+    }
 
     if (!trimmedName) {
       setError('请填写配置名称');
@@ -438,6 +452,7 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
           anthropicBaseUrl: trimmedBaseUrl,
           anthropicAuthToken: trimmedToken,
           happyclawModel: trimmedModel,
+          modelOptions: parsedModelOptions,
           customEnv: envResult.customEnv,
         });
       } else {
@@ -452,6 +467,7 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
             name: trimmedName,
             anthropicBaseUrl: trimmedBaseUrl,
             happyclawModel: trimmedModel,
+            modelOptions: parsedModelOptions,
             customEnv: envResult.customEnv,
           },
         );
@@ -937,6 +953,7 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
                     setEditingProfileId(null);
                     setEditorMode('create');
                     setAuthToken('');
+                    setModelOptionsText('');
                     setAuthTokenDirty(false);
                     setClearTokenOnSave(false);
                   }}
@@ -977,6 +994,20 @@ export function ClaudeProviderSection({ setNotice, setError }: ClaudeProviderSec
                     onChange={(e) => setModel(e.target.value)}
                     disabled={loading || saving}
                     placeholder="opus / sonnet / haiku 或完整模型 ID"
+                    className="font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">
+                    模型候选列表（用于聊天页下拉，逗号分隔）
+                  </label>
+                  <Input
+                    type="text"
+                    value={modelOptionsText}
+                    onChange={(e) => setModelOptionsText(e.target.value)}
+                    disabled={loading || saving}
+                    placeholder="例如：claude-sonnet-4-5, glm-4.5, gpt-4.1"
                     className="font-mono"
                   />
                 </div>

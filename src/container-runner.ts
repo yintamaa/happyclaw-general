@@ -20,10 +20,10 @@ import {
 } from './mount-security.js';
 import {
   buildContainerEnvLines,
-  getClaudeProviderConfig,
   getContainerEnvConfig,
   getSystemSettings,
   mergeClaudeEnvConfig,
+  resolveClaudeProviderConfigByProfileId,
   shellQuoteEnvLines,
   writeCredentialsFile,
 } from './runtime-config.js';
@@ -380,9 +380,22 @@ function buildVolumeMounts(
   // Global config merged with per-container overrides.
   const envDir = path.join(DATA_DIR, 'env', group.folder);
   fs.mkdirSync(envDir, { recursive: true });
-  const globalConfig = getClaudeProviderConfig();
+  const selectedProvider = resolveClaudeProviderConfigByProfileId(
+    group.selected_profile_id,
+  );
+  const globalConfig = selectedProvider.config;
   const containerOverride = getContainerEnvConfig(group.folder);
-  const envLines = buildContainerEnvLines(globalConfig, containerOverride);
+  const effectiveOverride = {
+    ...containerOverride,
+    ...(group.selected_model !== undefined
+      ? { happyclawModel: group.selected_model }
+      : {}),
+  };
+  const envLines = buildContainerEnvLines(
+    globalConfig,
+    effectiveOverride,
+    selectedProvider.customEnv,
+  );
   if (envLines.length > 0) {
     const envFilePath = path.join(envDir, 'env');
     const quotedLines = shellQuoteEnvLines(envLines);
@@ -405,7 +418,7 @@ function buildVolumeMounts(
   }
 
   // Write .credentials.json for OAuth credentials (session dir is already mounted)
-  const mergedConfig = mergeClaudeEnvConfig(globalConfig, containerOverride);
+  const mergedConfig = mergeClaudeEnvConfig(globalConfig, effectiveOverride);
   if (mergedConfig.claudeOAuthCredentials) {
     try {
       writeCredentialsFile(groupSessionsDir, mergedConfig);
@@ -920,9 +933,22 @@ export async function runHostAgent(
   };
 
   // 配置层环境变量
-  const globalConfig = getClaudeProviderConfig();
+  const selectedProvider = resolveClaudeProviderConfigByProfileId(
+    group.selected_profile_id,
+  );
+  const globalConfig = selectedProvider.config;
   const containerOverride = getContainerEnvConfig(group.folder);
-  const envLines = buildContainerEnvLines(globalConfig, containerOverride);
+  const effectiveOverride = {
+    ...containerOverride,
+    ...(group.selected_model !== undefined
+      ? { happyclawModel: group.selected_model }
+      : {}),
+  };
+  const envLines = buildContainerEnvLines(
+    globalConfig,
+    effectiveOverride,
+    selectedProvider.customEnv,
+  );
   for (const line of envLines) {
     const eqIdx = line.indexOf('=');
     if (eqIdx > 0) {
@@ -931,7 +957,7 @@ export async function runHostAgent(
   }
 
   // Write .credentials.json for OAuth credentials
-  const mergedConfig = mergeClaudeEnvConfig(globalConfig, containerOverride);
+  const mergedConfig = mergeClaudeEnvConfig(globalConfig, effectiveOverride);
   if (mergedConfig.claudeOAuthCredentials) {
     try {
       writeCredentialsFile(groupSessionsDir, mergedConfig);

@@ -47,6 +47,8 @@ export interface RegisteredGroup {
   created_by?: string;
   is_home?: boolean; // 用户主容器标记
   selected_skills?: string[] | null; // null = 全部启用
+  selected_profile_id?: string; // 运行时配置档案（__official__ 或第三方 profile id）
+  selected_model?: string; // 运行时模型覆盖（为空表示使用 profile 默认模型）
   target_agent_id?: string; // IM 消息路由到指定 conversation agent
   target_main_jid?: string; // IM 消息路由到指定工作区的主对话（web:{folder}）
   reply_policy?: 'source_only' | 'mirror'; // IM 绑定的回复策略

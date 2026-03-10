@@ -16,6 +16,8 @@ export interface GroupInfo {
   custom_cwd?: string;
   created_by?: string;
   selected_skills?: string[] | null;
+  selected_profile_id?: string;
+  selected_model?: string;
   pinned_at?: string;
 }
 
