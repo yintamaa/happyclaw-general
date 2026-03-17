@@ -1,0 +1,24 @@
+proxies:
+  - name: "my-hy2-node"
+    type: hysteria2
+    server: 203.0.113.10
+    port: 443
+    password: replace-with-auth-password
+    obfs: salamander
+    obfs-password: replace-with-obfs-password
+    up: "200 Mbps"
+    down: "200 Mbps"
+    sni: 203.0.113.10
+    skip-cert-verify: true
+    alpn:
+      - h3
+    udp: true
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - "my-hy2-node"
+
+rules:
+  - MATCH,PROXY

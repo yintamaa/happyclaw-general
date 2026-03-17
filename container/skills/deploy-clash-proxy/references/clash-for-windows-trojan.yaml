@@ -1,0 +1,18 @@
+proxies:
+  - name: "my-trojan-node"
+    type: trojan
+    server: 203.0.113.10
+    port: 443
+    password: replace-with-trojan-password
+    sni: 203.0.113.10
+    skip-cert-verify: true
+    udp: true
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - "my-trojan-node"
+
+rules:
+  - MATCH,PROXY

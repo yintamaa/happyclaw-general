@@ -1,0 +1,7 @@
+interface:
+  display_name: "Deploy Clash Proxy"
+  short_description: "Deploy sing-box proxy and fix Claude Code proxy issues."
+  default_prompt: "Use $deploy-clash-proxy to deploy a Clash-compatible proxy node and diagnose Claude Code connectivity."
+
+policy:
+  allow_implicit_invocation: true
